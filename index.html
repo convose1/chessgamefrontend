@@ -1,0 +1,1110 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Speed Chess Game</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.12.0/chess.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css"
+    />
+    <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
+    <script
+      src="https://cdn.socket.io/4.7.5/socket.io.min.js"
+      crossorigin="anonymous"
+    ></script>
+    <style>
+      :root {
+        --bg: #0f172a; /* slate-900 */
+        --panel: #111827; /* gray-900 */
+        --muted: #94a3b8; /* slate-400 */
+        --text: #e5e7eb; /* gray-200 */
+        --accent: #22c55e; /* green-500 */
+        --accent-2: #60a5fa; /* blue-400 */
+        --danger: #ef4444; /* red-500 */
+        --square-light: #f0d9b5;
+        --square-dark: #b58863;
+        --highlight: #fbbf24; /* amber-400 */
+      }
+
+      /* (moved WebAudio code to script section) */
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
+          Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+        background: radial-gradient(
+          1200px 800px at 10% 10%,
+          #111827 0%,
+          #0b1022 60%,
+          #050816 100%
+        );
+        color: var(--text);
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        min-height: 100vh;
+      }
+      header {
+        padding: 16px 20px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      header h1 {
+        font-size: 18px;
+        letter-spacing: 0.6px;
+        margin: 0;
+        color: var(--text);
+      }
+      header .controls {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .btn {
+        appearance: none;
+        border: 0;
+        background: #334155;
+        color: #e5e7eb;
+        padding: 14px 20px;
+        border-radius: 14px;
+        font-weight: 800;
+        cursor: pointer;
+        transition: transform 0.06s ease, background 0.15s ease,
+          opacity 0.15s ease;
+        font-size: 18px;
+        letter-spacing: 0.2px;
+      }
+      .btn:active {
+        transform: translateY(1px);
+      }
+      .btn-green {
+        background: #22c55e;
+        color: #052e16;
+      }
+      .btn-green:hover {
+        background: #16a34a;
+      }
+      .btn-red {
+        background: #ef4444;
+        color: #3b0a0a;
+      }
+      .btn-red:hover {
+        background: #dc2626;
+      }
+      /* alias for existing buttons */
+      .btn-danger {
+        background: #ef4444;
+        color: #3b0a0a;
+      }
+      .btn-danger:hover {
+        background: #dc2626;
+      }
+      .btn-gray {
+        background: #1f2937;
+        color: #e5e7eb;
+      }
+      .btn-gray:hover {
+        background: #263241;
+      }
+
+      main {
+        display: grid;
+        gap: 16px;
+        padding: 0 20px 20px;
+        align-items: start;
+        grid-template-columns: 1fr;
+        max-width: 1100px;
+        width: 100%;
+        margin: 0 auto;
+      }
+      @media (min-width: 900px) {
+        main {
+          grid-template-columns: auto;
+        }
+      }
+
+      .card {
+        background: linear-gradient(
+          180deg,
+          rgba(255, 255, 255, 0.04),
+          rgba(255, 255, 255, 0.02)
+        );
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 16px;
+        padding: 14px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35),
+          inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      }
+
+      /* Board wrapper: provide inner padding around board and controls.
+       The inner content area (where the board sits) remains the same size,
+       while the outer card grows by the padding. */
+      .board-wrap {
+        display: grid;
+        gap: 10px;
+        /* Content (inner) width equals the board's responsive width */
+        --content-width: clamp(240px, 86vw, 640px);
+        /* Padding around everything */
+        --pad-x: 16px; /* horizontal padding */
+        --pad-y: 16px; /* vertical padding */
+        width: calc(var(--content-width) + (var(--pad-x) * 2));
+        max-width: calc(640px + (var(--pad-x) * 2));
+        margin: 0 auto;
+        padding: var(--pad-y) var(--pad-x);
+      }
+      /* Ensure inner rows fill the card width so border encloses all children visually */
+      .board-wrap .row,
+      .board-wrap .timers,
+      .board-wrap #status,
+      .board-wrap #role {
+        width: 100%;
+      }
+      #board {
+        width: 100%;
+        max-width: 640px;
+      }
+      @media (min-width: 900px) {
+        #board {
+          width: 640px;
+        }
+      }
+
+      /* Timers */
+      .timers {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      .clock {
+        background: linear-gradient(
+          180deg,
+          rgba(255, 255, 255, 0.04),
+          rgba(255, 255, 255, 0.02)
+        );
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        padding: 10px 12px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        font-variant-numeric: tabular-nums;
+      }
+      .clock .side {
+        opacity: 0.7;
+        font-weight: 700;
+      }
+      .clock.active {
+        border-color: var(--accent-2);
+        box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.25) inset;
+      }
+      .clock.low {
+        border-color: var(--danger);
+        box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.25) inset;
+        color: #fecaca;
+      }
+
+      /* Right panel */
+      .panel {
+        display: grid;
+        gap: 12px;
+      }
+      .field {
+        display: grid;
+        gap: 8px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      label {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      select,
+      input {
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        color: var(--text);
+        padding: 8px 10px;
+        border-radius: 10px;
+      }
+
+      /* Status + moves */
+      #status {
+        font-size: 14px;
+        color: #dbeafe;
+        padding: 8px 10px;
+        border-radius: 10px;
+        background: rgba(59, 130, 246, 0.08);
+        border: 1px solid rgba(59, 130, 246, 0.2);
+      }
+      .moves {
+        max-height: 320px;
+        overflow: auto;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .moves table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .moves th,
+      .moves td {
+        padding: 8px 10px;
+        font-size: 14px;
+      }
+      .moves tr:nth-child(odd) {
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      /* Chessboard colors override */
+      .white-1e1d7 {
+        background: var(--square-light);
+      }
+      .black-3c85d {
+        background: var(--square-dark);
+      }
+      .square-highlight {
+        box-shadow: inset 0 0 0 4px rgba(251, 191, 36, 0.9) !important;
+      }
+      /* Ensure inner elements don't add extra margins that skew padding perception */
+      .card > * {
+        margin: 0;
+      }
+      /* Ensure controls don't stretch card width unnecessarily */
+      .card .field,
+      .card .actions {
+        width: auto;
+      }
+      #base-mins {
+        width: auto;
+        display: inline-block;
+      }
+      .card select,
+      .card button {
+        width: max-content;
+      }
+      /* Hide redundant name label in the name prompt */
+      #name-field label {
+        display: none !important;
+      }
+      /* Compact, dark-mode select with evenly padded arrow */
+      #base-mins {
+        -webkit-appearance: none;
+        appearance: none;
+        background-color: #111827; /* slate-900ish */
+        color: var(--text);
+        border: 2px solid #1f2937; /* slate-800 */
+        border-radius: 12px;
+        font-size: 16px;
+        line-height: 1.2;
+        padding: 10px 38px 10px 14px; /* extra right pad for arrow */
+        min-width: 140px;
+        max-width: 220px;
+        white-space: nowrap;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='M6 8l4 4 4-4' stroke='%2399A3B4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 12px center;
+        box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.06);
+      }
+      #base-mins:focus {
+        outline: none;
+        border-color: #2563eb;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.35);
+      }
+      /* For click-to-move dots */
+      #board .square-55d63 {
+        position: relative;
+      }
+      /* Ensure clicks land on the square, not the image */
+      #board img {
+        pointer-events: none;
+      }
+      #board .legal-dot {
+        position: absolute;
+        inset: 0;
+        margin: auto;
+        width: 34%;
+        height: 34%;
+        border-radius: 9999px;
+        background: rgba(59, 130, 246, 0.8);
+        box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.35) inset;
+        pointer-events: none;
+      }
+
+      footer {
+        padding: 10px 20px;
+        color: var(--muted);
+        font-size: 12px;
+        display: flex;
+        justify-content: center;
+      }
+
+      /* Toasts */
+      #toasts {
+        position: fixed;
+        top: 18px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: grid;
+        gap: 12px;
+        z-index: 50;
+      }
+      .toast {
+        background: #0b1220;
+        color: #e5e7eb;
+        border: 1px solid #263241;
+        padding: 16px 22px;
+        border-radius: 14px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+        min-width: 300px;
+        text-align: center;
+        font-weight: 800;
+        font-size: 16px;
+      }
+      .toast-show {
+        animation: toastIn 0.22s ease-out forwards;
+      }
+      .toast-hide {
+        animation: toastOut 0.18s ease-in forwards;
+      }
+      @keyframes toastIn {
+        from {
+          opacity: 0;
+          transform: translate(-50%, -12px);
+        }
+        to {
+          opacity: 1;
+          transform: translate(-50%, 0);
+        }
+      }
+      @keyframes toastOut {
+        from {
+          opacity: 1;
+          transform: translate(-50%, 0);
+        }
+        to {
+          opacity: 0;
+          transform: translate(-50%, -12px);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Header removed as requested -->
+
+    <main>
+      <section class="card board-wrap" style="position: relative">
+        <div id="board"></div>
+        <div class="timers">
+          <div id="white-clock" class="clock active">
+            <span class="side" id="white-name">White</span
+            ><span id="white-timer">2:00</span>
+          </div>
+          <div id="black-clock" class="clock">
+            <span class="side" id="black-name">Black</span
+            ><span id="black-timer">2:00</span>
+          </div>
+        </div>
+        <div id="status">White to move</div>
+        <div
+          id="role"
+          style="font-size: 12px; color: #94a3b8; display: none"
+        ></div>
+
+        <!-- Forfeit button -->
+        <div class="row" style="justify-content: flex-end; margin-top: 6px">
+          <button id="btn-forfeit" class="btn btn-danger">Forfeit</button>
+        </div>
+
+        <!-- Overlay for pre-start and end-of-game -->
+        <div
+          id="overlay"
+          style="
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          "
+        >
+          <div
+            id="overlay-bg"
+            style="
+              position: absolute;
+              inset: 0;
+              background: rgba(2, 6, 23, 0.55);
+              backdrop-filter: blur(2.5px);
+            "
+          ></div>
+          <div
+            class="card"
+            style="
+              position: relative;
+              z-index: 1;
+              display: inline-flex;
+              flex-direction: column;
+              gap: 14px;
+              align-items: center;
+              justify-content: center;
+              width: fit-content;
+              max-width: 92vw;
+              background: #0b1220;
+              border: 1px solid rgba(255, 255, 255, 0.06);
+              box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+              padding: 24px;
+              border-radius: 18px;
+              text-align: center;
+              transition: width 0.16s ease, height 0.16s ease,
+                padding 0.16s ease, gap 0.16s ease, box-shadow 0.16s ease;
+            "
+          >
+            <div id="overlay-title" style="font-weight: 900; font-size: 22px">
+              Speed chess
+            </div>
+            <div id="overlay-msg" style="color: var(--muted)"></div>
+
+            <!-- Name prompt (shown on first load) -->
+            <div id="name-field" class="field" style="display: none">
+              <label style="justify-content: center; display: none"
+                >Your name</label
+              >
+              <input
+                id="name-input"
+                type="text"
+                maxlength="24"
+                placeholder="Enter your name"
+                style="text-align: center"
+              />
+            </div>
+
+            <!-- Time control -->
+            <div id="tc-field" class="field">
+              <div class="row" style="justify-content: center">
+                <select
+                  id="base-mins"
+                  style="min-width: 220px; text-align-last: center"
+                >
+                  <option value="1">1 minute each</option>
+                  <option value="2" selected>2 minutes each</option>
+                  <option value="3">3 minutes each</option>
+                  <option value="5">5 minutes each</option>
+                  <option value="10">10 minutes each</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Actions area (changes per mode) -->
+            <div
+              id="overlay-actions"
+              class="row"
+              style="justify-content: center; gap: 12px"
+            >
+              <button id="btn-newgame" class="btn btn-green">Start Game</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Toast container -->
+    <div id="toasts" aria-live="polite" aria-atomic="true"></div>
+
+    <script>
+      // Game state
+      const game = new Chess(); // client mirror of server state
+      let board = null;
+      let currentPlayer = "w"; // from server
+      let whiteTime = 120; // seconds
+      let blackTime = 120; // seconds
+      let incPerMove = 0; // seconds
+      // no local timer; server is authoritative
+      let paused = true;
+      let orientation = "white";
+      let lastMove = null; // {from, to}
+      let selectedSquare = null;
+      let legalTargets = [];
+      let myColor = "spectator";
+      const origin = window.location.origin;
+      console.log("[client] origin =", origin);
+      // Hide connection chatter in UI; rely on assignment/state messages
+
+      const socket = io(
+        "https://chessgame-h9fvhvhzc7bae3ft.canadacentral-01.azurewebsites.net/",
+        {
+          transports: ["websocket", "polling"],
+          withCredentials: false,
+          autoConnect: true,
+          reconnection: true,
+          reconnectionAttempts: 10,
+          reconnectionDelay: 500,
+        }
+      );
+
+      socket.on("connect_error", (err) => {
+        console.error("[client] connect_error", err?.message || err);
+        $("#role").text("Connect error. Retrying...");
+      });
+      socket.on("error", (err) => {
+        console.error("[client] socket error", err);
+      });
+      console.log("[client] script loaded");
+      socket.on("connect", () => {
+        console.log("[client] socket connected", socket.id);
+      });
+      socket.on("disconnect", (r) => {
+        console.warn("[client] socket disconnected", r);
+        $("#role").text("Disconnected. Retrying...");
+      });
+      socket.io.on("reconnect_attempt", (n) =>
+        console.log("[client] reconnect_attempt", n)
+      );
+      socket.io.on("reconnect_error", (e) =>
+        console.warn("[client] reconnect_error", e?.message || e)
+      );
+      socket.io.on("reconnect_failed", () =>
+        console.error("[client] reconnect_failed")
+      );
+      socket.on("connect_timeout", () =>
+        console.warn("[client] connect_timeout")
+      );
+
+      // Initialize board
+      function initBoard() {
+        if (board) board.destroy && board.destroy();
+        board = Chessboard("board", {
+          draggable: false,
+          position: "start",
+          orientation,
+          pieceTheme:
+            "https://raw.githubusercontent.com/oakmac/chessboardjs/master/website/img/chesspieces/wikipedia/{piece}.png",
+        });
+        clearHighlights();
+        highlightLastMove();
+        console.log("[client] board initialized");
+      }
+
+      // UI helpers
+      function formatTime(s) {
+        const m = Math.max(0, Math.floor(s / 60));
+        const sec = Math.max(0, s % 60);
+        return `${m}:${sec < 10 ? "0" : ""}${sec}`;
+      }
+      function updateClocks() {
+        const turn = game.turn();
+        $("#white-timer").text(formatTime(whiteTime));
+        $("#black-timer").text(formatTime(blackTime));
+        $("#white-clock").toggleClass("active", turn === "w" && !paused);
+        $("#black-clock").toggleClass("active", turn === "b" && !paused);
+        $("#white-clock").toggleClass("low", whiteTime <= 10);
+        $("#black-clock").toggleClass("low", blackTime <= 10);
+      }
+
+      // No local timers; server pushes state every second while running
+
+      // No global pause/resume buttons anymore
+
+      // Drag rules
+      function onDragStart(source, piece) {
+        if (game.game_over() || paused) return false;
+        const turn = game.turn();
+        if (
+          (turn === "w" && piece[0] === "b") ||
+          (turn === "b" && piece[0] === "w")
+        )
+          return false;
+      }
+
+      function onDrop(source, target) {
+        // Enforce turn by source piece color
+        const srcPiece = game.get(source);
+        const turnBefore = game.turn();
+        if (!srcPiece || srcPiece.color !== turnBefore) return "snapback";
+        const move = game.move({ from: source, to: target, promotion: "q" });
+        if (move === null) return "snapback";
+
+        // Add increment to the player who just moved
+        if (move.color === "w") whiteTime += incPerMove;
+        else blackTime += incPerMove;
+
+        // Last move highlight
+        lastMove = { from: move.from, to: move.to };
+
+        // Update status
+        currentPlayer = game.turn();
+        selectedSquare = null;
+        clearLegalTargetDots();
+        updateStatus();
+        updateClocks();
+        startTimer();
+      }
+
+      function onSnapEnd() {
+        board.position(game.fen());
+        highlightLastMove();
+      }
+
+      // Status + game over
+      function updateStatus() {
+        const turn = game.turn();
+        let status = `${turn === "w" ? "White" : "Black"} to move`;
+        if (game.in_checkmate()) {
+          status = `Checkmate! ${turn === "w" ? "Black" : "White"} wins`;
+          endGame(status);
+        } else if (game.in_draw()) {
+          status = "Draw!";
+          endGame(status);
+        } else if (game.in_check()) {
+          status = `Check! ${turn === "w" ? "White" : "Black"} to move`;
+        }
+        $("#status").text(status);
+      }
+      function endGame(message) {
+        paused = true;
+        showOverlay(message || "Game over");
+      }
+      function gameOverOnTime(winner) {
+        const msg = `${winner} wins on time!`;
+        $("#status").text(msg);
+        showOverlay(msg);
+      }
+
+      // Move list removed
+
+      // Highlights
+      function clearHighlights() {
+        const squares = document.querySelectorAll("#board .square-55d63");
+        squares.forEach((s) => s.classList.remove("square-highlight"));
+      }
+      function highlight(square) {
+        const el = document.querySelector(`#board .square-${square}`);
+        if (el) el.classList.add("square-highlight");
+      }
+      function highlightLastMove() {
+        clearHighlights();
+        if (!lastMove) return;
+        highlight(lastMove.from);
+        highlight(lastMove.to);
+      }
+
+      // Click-to-move helpers
+      function getSquareFromEl(el) {
+        // Prefer data attribute if present
+        const ds = el.getAttribute("data-square");
+        if (ds && /^[a-h][1-8]$/.test(ds)) return ds;
+        const match = [...el.classList].find((c) =>
+          /^square-[a-h][1-8]$/.test(c)
+        );
+        return match ? match.slice(7) : null;
+      }
+      function pieceColorAt(square) {
+        const p = game.get(square);
+        return p ? p.color : null;
+      }
+      function showLegalTargets(from) {
+        clearLegalTargetDots();
+        legalTargets = game
+          .moves({ square: from, verbose: true })
+          .map((m) => m.to);
+        for (const t of legalTargets) {
+          const el = document.querySelector(`#board .square-${t}`);
+          if (el) {
+            const dot = document.createElement("div");
+            dot.className = "legal-dot";
+            el.appendChild(dot);
+          }
+        }
+      }
+      function clearLegalTargetDots() {
+        document
+          .querySelectorAll("#board .legal-dot")
+          .forEach((d) => d.remove());
+      }
+
+      // Controls
+      function resetGame() {
+        const mins = parseInt($("#base-mins").val(), 10) || 2;
+        const inc = 0; // increments removed from UI
+        selectedSquare = null;
+        clearLegalTargetDots();
+        clearHighlights();
+        socket.emit("setTimeControl", { baseMins: mins, inc });
+        // server will broadcast state
+      }
+      // Overlay controls
+      function showOverlay(message) {
+        $("#overlay").show();
+        $("#overlay-title").text("Game Over");
+        $("#overlay-msg").text(message || "");
+        $("#btn-newgame").text("New Game");
+        positionOverlayCard();
+        positionToasts();
+      }
+      function hideOverlay() {
+        $("#overlay").hide();
+      }
+      // Modern overlay behavior + handshake
+      let currentOverlayMode = "ready";
+      function positionOverlayCard() {
+        const $card = $("#overlay .card");
+        const boardEl = document.getElementById("board");
+        if (!$card.length || !boardEl) return;
+        const r = boardEl.getBoundingClientRect();
+        const cx = r.left + r.width / 2;
+        const cy = r.top + r.height / 2;
+        $card.css({
+          position: "absolute",
+          left: `${cx}px`,
+          top: `${cy}px`,
+          transform: "translate(-50%, -50%)",
+        });
+      }
+      function positionToasts() {
+        const toasts = document.getElementById("toasts");
+        const boardEl = document.getElementById("board");
+        if (!toasts || !boardEl) return;
+        const r = boardEl.getBoundingClientRect();
+        const cx = r.left + r.width / 2;
+        toasts.style.left = `${cx}px`;
+        toasts.style.transform = "translateX(-50%)";
+      }
+      window.addEventListener("resize", () => {
+        if ($("#overlay").is(":visible")) positionOverlayCard();
+        positionToasts();
+      });
+      window.addEventListener(
+        "scroll",
+        () => {
+          if ($("#overlay").is(":visible")) positionOverlayCard();
+          positionToasts();
+        },
+        { passive: true }
+      );
+      // Initial alignment on load
+      document.addEventListener("DOMContentLoaded", () => {
+        positionToasts();
+      });
+      function showOverlayMode(mode, data = {}) {
+        currentOverlayMode = mode;
+        // modes: 'ready', 'name', 'waiting', 'offer', 'gameover', 'spectating'
+        const $title = $("#overlay-title");
+        const $msg = $("#overlay-msg");
+        const $actions = $("#overlay-actions");
+        const $nameField = $("#name-field");
+        const $tcField = $("#tc-field");
+        $actions.empty();
+        if (mode === "ready") {
+          $title.text("Speed chess");
+          $msg.text("");
+          $nameField.hide();
+          $tcField.show();
+          $actions.append(
+            '<button id="btn-newgame" class="btn btn-green" data-primary="true">Start Game</button>'
+          );
+        } else if (mode === "waiting") {
+          $title.text("Waiting for opponent to accept game");
+          $msg.text("");
+          $nameField.hide();
+          $tcField.hide();
+          $actions.append(
+            '<button id="btn-cancel-start" class="btn btn-red">Cancel</button>'
+          );
+        } else if (mode === "offer") {
+          $title.text("Game offer");
+          const who = data.fromName || "Opponent";
+          const mins = data.baseMins || 2;
+          $msg.text(`${who} wants to start a ${mins}-minute-each game.`);
+          $nameField.hide();
+          $tcField.hide();
+          $actions.append(
+            '<button id="btn-reject" class="btn btn-red">Reject</button>'
+          );
+          $actions.append(
+            '<button id="btn-accept" class="btn btn-green" data-primary="true">Accept</button>'
+          );
+        } else if (mode === "spectating") {
+          $title.text("Spectating");
+          $msg.text("Waiting for players...");
+          $nameField.hide();
+          $tcField.hide();
+        } else if (mode === "gameover") {
+          // Do not overwrite the winner title/message set by the server handler
+          $nameField.hide();
+          $tcField.show();
+          // Provide immediate ability to start a new game
+          $actions.append(
+            '<button id="btn-newgame" class="btn btn-green" data-primary="true">Start New Game</button>'
+          );
+        }
+        $("#overlay").show();
+        positionOverlayCard();
+        positionToasts();
+      }
+
+      // Start button -> proposeStart
+      $(document).on("click", "#btn-newgame", () => {
+        const mins = parseInt($("#base-mins").val(), 10) || 2;
+        socket.emit("proposeStart", { baseMins: mins, inc: 0 });
+      });
+
+      // Iframe app
+      window.addEventListener("message", (event) => {
+        const { type, payload } = event.data || {};
+        if (type === "SET_PLAYER_NAME") {
+          const name = (payload?.name || "").trim();
+          if (!name) return;
+
+          // Save locally
+          localStorage.setItem("playerName", name);
+
+          // Send to server via socket
+          socket.emit("setName", { name });
+
+          // Switch UI state
+          showOverlayMode("ready");
+        }
+      });
+
+      // Cancel start
+      $(document).on("click", "#btn-cancel-start", () => {
+        socket.emit("cancelStart");
+      });
+
+      // Forfeit
+      $("#btn-forfeit").on("click", () => {
+        if (myColor === "w" || myColor === "b") {
+          socket.emit("forfeit");
+        }
+      });
+
+      // Click-to-move interaction
+      $(document).on("click", "#board", function (e) {
+        if (paused || game.game_over()) return;
+        const squareEl = e.target.closest("#board .square-55d63");
+        if (!squareEl) return;
+        const sq = getSquareFromEl(squareEl);
+        if (!sq) return;
+
+        const turn = game.turn();
+        if (!selectedSquare) {
+          // select only if piece matches current side
+          const pc = pieceColorAt(sq);
+          // additionally enforce assigned color
+          if (!pc || pc !== turn || myColor !== pc) return;
+          selectedSquare = sq;
+          clearHighlights();
+          highlight(sq);
+          showLegalTargets(sq);
+          return;
+        }
+
+        if (sq === selectedSquare) {
+          // deselect
+          selectedSquare = null;
+          clearHighlights();
+          clearLegalTargetDots();
+          return;
+        }
+
+        // Only allow moving to computed legal targets for current selection
+        if (!legalTargets.includes(sq)) {
+          // if clicked own piece, switch selection
+          const pc2 = pieceColorAt(sq);
+          if (pc2 && pc2 === turn) {
+            selectedSquare = sq;
+            clearHighlights();
+            highlight(sq);
+            showLegalTargets(sq);
+          }
+          return;
+        }
+
+        // Revalidate turn and my color
+        if (game.turn() !== turn || myColor !== turn) {
+          return;
+        }
+
+        // Send move to server; do not update locally until state arrives
+        const payload = { from: selectedSquare, to: sq, promotion: "q" };
+        socket.emit("move", payload);
+        selectedSquare = null;
+        clearLegalTargetDots();
+        clearHighlights();
+      });
+
+      // Socket wiring
+      socket.on("connect", () => {
+        // connected
+      });
+      socket.on("assign", (data) => {
+        myColor = data.color || "spectator";
+        whiteTime = data.whiteTime;
+        blackTime = data.blackTime;
+        incPerMove = data.inc || 0;
+        game.load(data.fen);
+        currentPlayer = data.turn;
+        board && board.position(game.fen());
+        // Set orientation to my color for UX
+        if (myColor === "w" || myColor === "b") {
+          orientation = myColor === "w" ? "white" : "black";
+          board && board.orientation(orientation);
+          // Name prompt first time
+          const saved = localStorage.getItem("playerName");
+          if (saved) {
+            socket.emit("setName", { name: saved });
+            showOverlayMode("ready");
+          } else {
+            showOverlayMode("name");
+          }
+        }
+        updateClocks();
+        updateStatus();
+        $("#role")
+          .text(
+            `You are: ${
+              myColor === "w"
+                ? "White"
+                : myColor === "b"
+                ? "Black"
+                : "Spectator"
+            }`
+          )
+          .show();
+        if (myColor === "spectator") {
+          showOverlayMode("spectating");
+        }
+        console.log("[client] assigned as", myColor);
+      });
+      socket.on("state", (data) => {
+        console.log("[client] state received", {
+          started: data.started,
+          turn: data.turn,
+          fen: data.fen && data.fen.slice(0, 20) + "...",
+        });
+        if (typeof data.whiteTime === "number") whiteTime = data.whiteTime;
+        if (typeof data.blackTime === "number") blackTime = data.blackTime;
+        if (typeof data.inc === "number") incPerMove = data.inc;
+        if (data.whiteName) $("#white-name").text(data.whiteName);
+        if (data.blackName) $("#black-name").text(data.blackName);
+        if (data.fen) {
+          const prevFen = game.fen();
+          if (prevFen !== data.fen) {
+            game.load(data.fen);
+            board && board.position(data.fen);
+            playMoveSound();
+            // clear selection only when the board actually changed
+            selectedSquare = null;
+            clearLegalTargetDots();
+          }
+        }
+        lastMove = data.lastMove || lastMove;
+        highlightLastMove();
+        currentPlayer = data.turn || game.turn();
+        updateClocks();
+        updateStatus();
+        if (data.started) {
+          paused = false;
+          $("#overlay").hide();
+        }
+      });
+      socket.on("overlay", (data) => {
+        const message = (data && data.message) || "";
+        const winnerName = data && data.winnerName;
+        const winnerColor = data && data.winnerColor;
+        const reason = data && data.reason;
+        if (winnerName && winnerColor) {
+          $("#overlay-title").text(
+            `${winnerName} (${
+              winnerColor === "w" ? "white" : "black"
+            }) wins! 🎉`
+          );
+          $("#overlay-msg").text(reason ? `(${reason})` : "");
+        } else {
+          $("#overlay-title").text("Game Over");
+          $("#overlay-msg").text(message || "");
+        }
+        showOverlayMode("gameover");
+      });
+
+      // Start handshake events
+      socket.on("startStatus", (data) => {
+        const st = data && data.status;
+        if (st === "waiting") {
+          showOverlayMode("waiting");
+        } else if (st === "accepted") {
+          $("#overlay").hide();
+        } else if (st === "rejected" || st === "cancelled") {
+          showOverlayMode("ready");
+          if (st === "rejected" && data && data.byName) {
+            showToast(`${data.byName} rejected your game request`);
+          }
+        } else if (st === "no_opponent") {
+          showOverlayMode("ready");
+          showToast("No one here to play with");
+        } else if (st === "not_player") {
+          showToast("You're a spectator and can't start a game");
+        }
+      });
+      socket.on("startOffer", (data) => {
+        showOverlayMode("offer", data || {});
+        $(document)
+          .off("click", "#btn-accept")
+          .on("click", "#btn-accept", () =>
+            socket.emit("respondStart", { accept: true })
+          );
+        $(document)
+          .off("click", "#btn-reject")
+          .on("click", "#btn-reject", () =>
+            socket.emit("respondStart", { accept: false })
+          );
+      });
+
+      // Boot
+      initBoard();
+      // wait for server to push initial assign/state
+      // Keep overlay visible initially; content will be set after assignment
+
+      // Toast helper
+      function showToast(msg) {
+        const $wrap = $("#toasts");
+        const id = "t" + Date.now();
+        const $t = $(`<div class="toast toast-show" id="${id}"></div>`).text(
+          msg
+        );
+        $wrap.append($t);
+        setTimeout(() => {
+          $t.removeClass("toast-show").addClass("toast-hide");
+        }, 1800);
+        setTimeout(() => {
+          $t.remove();
+        }, 2000);
+      }
+
+      // Enter to activate primary modal action (not for Forfeit)
+      $(document).on("keydown", (e) => {
+        if (e.key === "Enter" && $("#overlay").is(":visible")) {
+          // Avoid triggering when focusing non-modal inputs? We allow name input.
+          // Map to primary action per mode
+          if (currentOverlayMode === "ready") {
+            $("#btn-newgame").trigger("click");
+            e.preventDefault();
+          } else if (currentOverlayMode === "offer") {
+            $("#btn-accept").trigger("click");
+            e.preventDefault();
+          } else if (currentOverlayMode === "gameover") {
+            $("#btn-newgame").trigger("click");
+            e.preventDefault();
+          }
+        }
+      });
+    </script>
+  </body>
+</html>
