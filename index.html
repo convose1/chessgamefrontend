@@ -18,7 +18,7 @@
     ></script>
     <style>
       :root {
-        --bg: #0f172a; /* slate-900 */ /* slate-900 */ /* slate-9009248579238752aaaaaabbbbb */
+        --bg: #0f172a; /* slate-900 */
         --panel: #111827; /* gray-900 */
         --muted: #94a3b8; /* slate-400 */
         --text: #e5e7eb; /* gray-200 */
@@ -91,7 +91,7 @@
         background: #16a34a;
       }
       .btn-red {
-        background: #80ef44;
+        background: #ef4444;
         color: #3b0a0a;
       }
       .btn-red:hover {
@@ -534,7 +534,6 @@
       let selectedSquare = null;
       let legalTargets = [];
       let myColor = "spectator";
-      let nameIsSet = false;
       const origin = window.location.origin;
       console.log("[client] origin =", origin);
       // Hide connection chatter in UI; rely on assignment/state messages
@@ -861,7 +860,6 @@
       window.addEventListener("message", (event) => {
         const { type, payload } = event.data || {};
         if (type === "SET_PLAYER_NAME") {
-          nameIsSet = true;
           const name = (payload?.name || "").trim();
           if (!name) return;
 
@@ -875,20 +873,6 @@
           showOverlayMode("ready");
         }
       });
-
-      setTimeout(() => {
-        if (!nameIsSet) {
-          // Save locally
-          const name = "ChessPlayer";
-          localStorage.setItem("playerName", name);
-
-          // Send to server via socket
-          socket.emit("setName", { name });
-
-          // Switch UI state
-          showOverlayMode("ready");
-        }
-      }, 5000);
 
       // Cancel start
       $(document).on("click", "#btn-cancel-start", () => {
