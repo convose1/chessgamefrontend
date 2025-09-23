@@ -537,9 +537,10 @@
       const origin = window.location.origin;
       console.log("[client] origin =", origin);
       // Hide connection chatter in UI; rely on assignment/state messages
-
+      // https://chessgame-h9fvhvhzc7bae3ft.canadacentral-01.azurewebsites.net/
+      // https://chessgame-h9fvhvhzc7bae3ft.canadacentral-01.azurewebsites.net/
       const socket = io(
-        "https://chessgame-h9fvhvhzc7bae3ft.canadacentral-01.azurewebsites.net/",
+        "https://chessgame-h9fvhvhzc7bae3ft.canadacentral-01.azurewebsites.net",
         {
           transports: ["websocket", "polling"],
           withCredentials: false,
@@ -833,7 +834,9 @@
             $("#name-input").val(qp.slice(0, 24));
           }
           // Focus input after render
-          setTimeout(() => { $("#name-input").trigger("focus"); }, 0);
+          setTimeout(() => {
+            $("#name-input").trigger("focus");
+          }, 0);
         } else if (mode === "waiting") {
           $title.text("Waiting for opponent to accept game");
           $msg.text("");
