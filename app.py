@@ -13,13 +13,15 @@ socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')
 board = chess.Board()
 players = {'w': None, 'b': None}  # sid of socket
 names = {}  # sid -> display name
+connected_sids = set()  # all currently connected client sids
 white_time = 120
 black_time = 120
 inc_per_move = 0
 _timer_thread = None
 _timer_lock = threading.Lock()
 _timer_running = False
-pending_start = None  # {'from': sid, 'base': mins, 'inc': inc}
+pending_start = None  # {'from': sid, 'base': mins, 'inc': inc, 'opponent': sid or None}
+_pending_lock = threading.Lock()
 
 
 def get_turn():
@@ -43,6 +45,36 @@ def broadcast_state(extra=None):
     if extra:
         payload.update(extra)
     socketio.emit('state', payload)
+
+
+def emit_assign_to_sid(sid, started=False):
+    """Emit current assignment to a specific sid."""
+    color = 'spectator'
+    if players['w'] == sid:
+        color = 'w'
+    elif players['b'] == sid:
+        color = 'b'
+    emit('assign', {
+        'color': color,
+        'fen': board.fen(),
+        'whiteTime': white_time,
+        'blackTime': black_time,
+        'inc': inc_per_move,
+        'turn': get_turn(),
+        'whiteName': names.get(players['w'], 'White'),
+        'blackName': names.get(players['b'], 'Black'),
+        'started': bool(started),
+    }, to=sid)
+
+
+def broadcast_assignments(started=False):
+    """Emit assignment payloads to all connected clients."""
+    for sid in list(connected_sids):
+        try:
+            emit_assign_to_sid(sid, started=started)
+        except Exception:
+            # best-effort; if a sid dropped, it will be cleaned up on disconnect
+            pass
 
 
 def _timer_loop():
@@ -98,6 +130,7 @@ def root():
 @socketio.on('connect')
 def on_connect():
     sid = request.sid
+    connected_sids.add(sid)
     # Assign color
     color = 'spectator'
     if players['w'] is None:
@@ -110,16 +143,22 @@ def on_connect():
         color = 'w'
     elif players['b'] == sid:
         color = 'b'
-    emit('assign', {
-        'color': color,
-        'fen': board.fen(),
-        'whiteTime': white_time,
-        'blackTime': black_time,
-        'inc': inc_per_move,
-        'turn': get_turn(),
-        'whiteName': names.get(players['w'], 'White'),
-        'blackName': names.get(players['b'], 'Black'),
-    })
+    # If a game is running, mark started so spectators hide overlay
+    emit_assign_to_sid(sid, started=_timer_running)
+    # If a game offer is currently pending, make sure late joiners see it
+    if pending_start and pending_start.get('from') != sid:
+        try:
+            socketio.emit(
+                'startOffer',
+                {
+                    'fromName': names.get(pending_start.get('from'), 'Player'),
+                    'baseMins': pending_start.get('base', 2),
+                    'inc': pending_start.get('inc', 0),
+                },
+                to=sid,
+            )
+        except Exception:
+            pass
     print(f"[server] {sid} joined as {color}")
     broadcast_state({'note': f'{sid} joined as {color}'})
 
@@ -132,6 +171,7 @@ def request_sid():
 @socketio.on('disconnect')
 def on_disconnect():
     sid = request.sid
+    connected_sids.discard(sid)
     if players['w'] == sid:
         players['w'] = None
     if players['b'] == sid:
@@ -242,22 +282,33 @@ def on_propose_start(data):
     sid = request.sid
     base = int(data.get('baseMins', 2))
     inc = int(data.get('inc', 0))
-    # must be seated and opponent present
-    if sid not in (players['w'], players['b']):
-        emit('startStatus', {'status': 'not_player'})
+    # Anyone in the lobby may propose a start as long as a game isn't running
+    # and there isn't already a pending offer.
+    if _timer_running:
+        print(f"[server] proposeStart ignored: game running (sid={sid})")
+        emit('startStatus', {'status': 'game_running'})
         return
-    other = _other_player_sid(sid)
-    if not other:
-        emit('startStatus', {'status': 'no_opponent'})
-        return
+    with _pending_lock:
+        if pending_start is not None:
+            print(f"[server] proposeStart ignored: already pending (sid={sid})")
+            emit('startStatus', {'status': 'waiting'})
+            return
     # create pending request
-    pending_start = {'from': sid, 'base': base, 'inc': inc}
+    with _pending_lock:
+        pending_start = {'from': sid, 'base': base, 'inc': inc, 'opponent': None}
+    print(f"[server] proposeStart: from={sid} base={base} inc={inc}")
     emit('startStatus', {'status': 'waiting'})
-    socketio.emit('startOffer', {
+    # broadcast offer to everyone else in the lobby (all connected except proposer)
+    offer_payload = {
         'fromName': names.get(sid, 'Player'),
         'baseMins': base,
         'inc': inc
-    }, to=other)
+    }
+    for other_sid in list(connected_sids):
+        if other_sid == sid:
+            continue
+        socketio.emit('startOffer', offer_payload, to=other_sid)
+    print(f"[server] startOffer broadcast to {len(connected_sids)-1} clients")
 
 
 @socketio.on('cancelStart')
@@ -265,11 +316,10 @@ def on_cancel_start():
     global pending_start
     sid = request.sid
     if pending_start and pending_start.get('from') == sid:
-        other = _other_player_sid(sid)
         pending_start = None
-        if other:
-            socketio.emit('startStatus', {'status': 'cancelled'}, to=other)
-        emit('startStatus', {'status': 'cancelled'})
+        # notify everyone that the offer was cancelled
+        for other_sid in list(connected_sids):
+            socketio.emit('startStatus', {'status': 'cancelled'}, to=other_sid)
 
 
 @socketio.on('respondStart')
@@ -277,26 +327,75 @@ def on_respond_start(data):
     global pending_start
     sid = request.sid
     accept = bool(data.get('accept'))
-    if not pending_start:
+    with _pending_lock:
+        ps = pending_start
+    if not ps:
+        print(f"[server] respondStart: no pending offer (sid={sid}, accept={accept})")
         emit('startStatus', {'status': 'no_pending'})
         return
-    proposer = pending_start.get('from')
-    other = _other_player_sid(proposer)
-    if sid != other:
-        return
-    if accept:
-        base = pending_start.get('base', 2)
-        inc = pending_start.get('inc', 0)
-        reset_game(base, inc)
-        pending_start = None
-        socketio.emit('startStatus', {'status': 'accepted'})
-        start_timer()
-        broadcast_state({'started': True})
-    else:
+    proposer = ps.get('from')
+    if not accept:
         # Inform proposer who rejected
+        print(f"[server] respondStart: REJECT sid={sid} -> notify proposer={proposer}")
         socketio.emit('startStatus', {'status': 'rejected', 'byName': names.get(sid, 'Opponent')}, to=proposer)
         emit('startStatus', {'status': 'rejected'})
-        pending_start = None
+        return
+
+    # Accept path: take the first accepter only
+    with _pending_lock:
+        if pending_start and pending_start.get('opponent') is None:
+            pending_start['opponent'] = sid
+            took_slot = True
+            base = pending_start.get('base', 2)
+            inc = pending_start.get('inc', 0)
+        else:
+            took_slot = False
+
+    if took_slot:
+        print(f"[server] respondStart: ACCEPT sid={sid} proposer={proposer}")
+        # Seat the proposer and opponent into w/b
+        # Keep the proposer's current color; opponent gets the other color
+        if players['w'] == proposer:
+            opponent_color = 'b'
+            players['b'] = sid
+        elif players['b'] == proposer:
+            opponent_color = 'w'
+            players['w'] = sid
+        else:
+            # Proposer somehow lost seat; default proposer to white, accepter to black
+            players['w'] = proposer
+            opponent_color = 'b'
+            players['b'] = sid
+
+        # Ensure both players have default display names if missing
+        if not names.get(proposer):
+            names[proposer] = 'ChessPlayer'
+        if not names.get(sid):
+            names[sid] = 'ChessPlayer'
+
+        # Immediately notify proposer and opponent of their roles before starting
+        emit_assign_to_sid(proposer, started=False)
+        emit_assign_to_sid(sid, started=False)
+        # Also update everyone else (spectators) of current assignments
+        broadcast_assignments(started=False)
+
+        # Start the game with requested tc
+        print(f"[server] starting game base={base} inc={inc}")
+        reset_game(base, inc)
+        with _pending_lock:
+            pending_start = None
+        # Acknowledge acceptance to proposer and opponent
+        socketio.emit('startStatus', {'status': 'accepted'}, to=proposer)
+        socketio.emit('startStatus', {'status': 'accepted'}, to=sid)
+        # Start timer and broadcast started state
+        start_timer()
+        broadcast_state({'started': True})
+        # After game starts, ensure everyone (including players) receives started flag
+        broadcast_assignments(started=True)
+    else:
+        print(f"[server] respondStart: SLOTS_FULL sid={sid}")
+        # Slots are full; inform this late accepter
+        emit('startStatus', {'status': 'slots_full'})
 
 
 @socketio.on('forfeit')
@@ -318,6 +417,18 @@ def on_forfeit():
         emit('errorMsg', {'message': 'Spectators cannot forfeit'})
     broadcast_state({'over': True})
 
+
+@socketio.on('hardReset')
+def on_hard_reset():
+    """TESTING ONLY: Fully reset server state to lobby without disconnecting clients.
+    Resets board, timers, pending offers, and broadcasts clean assignments/state.
+    """
+    global pending_start
+    stop_timer()
+    pending_start = None
+    reset_game(base_mins=2, inc=0)
+    # Ensure clients see non-started lobby state and correct roles
+    broadcast_assignments(started=False)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', '8080'))
