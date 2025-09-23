@@ -84,7 +84,7 @@
         transform: translateY(1px);
       }
       .btn-green {
-        background: #2263c5;
+        background: #22c55e;
         color: #052e16;
       }
       .btn-green:hover {
@@ -537,19 +537,29 @@
       const origin = window.location.origin;
       console.log("[client] origin =", origin);
       // Hide connection chatter in UI; rely on assignment/state messages
-      // https://chessgame-h9fvhvhzc7bae3ft.canadacentral-01.azurewebsites.net/
-      // https://chessgame-h9fvhvhzc7bae3ft.canadacentral-01.azurewebsites.net/
-      const socket = io(
-        "https://chessgame-h9fvhvhzc7bae3ft.canadacentral-01.azurewebsites.net",
-        {
-          transports: ["websocket", "polling"],
-          withCredentials: false,
-          autoConnect: true,
-          reconnection: true,
-          reconnectionAttempts: 10,
-          reconnectionDelay: 500,
-        }
+      const PROD_SOCKET_URL =
+        "https://chessgame-h9fvhvhzc7bae3ft.canadacentral-01.azurewebsites.net/";
+      const isLocalHost = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i.test(
+        window.location.hostname || ""
       );
+      const socket = isLocalHost
+        ? io({
+            // Use long-polling only in local dev to avoid Werkzeug websocket issues
+            transports: ["polling"],
+            withCredentials: false,
+            autoConnect: true,
+            reconnection: true,
+            reconnectionAttempts: 10,
+            reconnectionDelay: 500,
+          })
+        : io(PROD_SOCKET_URL, {
+            transports: ["websocket", "polling"],
+            withCredentials: false,
+            autoConnect: true,
+            reconnection: true,
+            reconnectionAttempts: 10,
+            reconnectionDelay: 500,
+          });
 
       socket.on("connect_error", (err) => {
         console.error("[client] connect_error", err?.message || err);
@@ -1002,41 +1012,30 @@
         if (myColor === "w" || myColor === "b") {
           orientation = myColor === "w" ? "white" : "black";
           board && board.orientation(orientation);
-          // Name prompt first time
+          // Auto-assign a default name for testing if none saved or provided
           const saved = localStorage.getItem("playerName");
           const qp = (getQueryParam("name") || "").trim();
-          const picked = (saved || qp || "").trim();
-          if (picked) {
-            const finalName = picked.slice(0, 24);
-            // Ensure stored for future loads
-            localStorage.setItem("playerName", finalName);
-            socket.emit("setName", { name: finalName });
-            showOverlayMode("ready");
-          } else {
-            showOverlayMode("name");
-          }
+          const picked = (saved || qp || "ChessPlayer").trim();
+          const finalName = picked.slice(0, 24);
+          localStorage.setItem("playerName", finalName);
+          socket.emit("setName", { name: finalName });
+          // Do not force any overlay change for players here; start/offer handlers will manage UI.
         }
         updateClocks();
         updateStatus();
-        $("#role")
-          .text(
-            `You are: ${
-              myColor === "w"
-                ? "White"
-                : myColor === "b"
-                ? "Black"
-                : "Spectator"
-            }`
-          )
-          .show();
-        if (myColor === "spectator") {
-          // If the game is already started, immediately hide overlay so spectator sees the live game.
-          if (data && data.started) {
-            paused = false;
-            $("#overlay").hide();
-          } else {
-            showOverlayMode("spectating");
-          }
+        const roleLabel =
+          myColor === "w"
+            ? "White"
+            : myColor === "b"
+            ? "Black"
+            : data && data.started
+            ? "Spectator"
+            : "In lobby";
+        $("#role").text(`You are: ${roleLabel}`).show();
+        // Do not change overlays on assignment except when started=true.
+        if (data && data.started) {
+          paused = false;
+          $("#overlay").hide();
         }
         console.log("[client] assigned as", myColor);
       });
@@ -1093,6 +1092,7 @@
 
       // Start handshake events
       socket.on("startStatus", (data) => {
+        console.log("[client] startStatus", data);
         const st = data && data.status;
         if (st === "waiting") {
           showOverlayMode("waiting");
@@ -1108,9 +1108,13 @@
           showToast("No one here to play with");
         } else if (st === "not_player") {
           showToast("You're a spectator and can't start a game");
+        } else if (st === "slots_full") {
+          showOverlayMode("spectating");
+          showToast("Game is full. You'll spectate when it starts.");
         }
       });
       socket.on("startOffer", (data) => {
+        console.log("[client] startOffer", data);
         showOverlayMode("offer", data || {});
         $(document)
           .off("click", "#btn-accept")
