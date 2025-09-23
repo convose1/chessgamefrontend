@@ -18,7 +18,7 @@
     ></script>
     <style>
       :root {
-        --bg: #0f172a; /* slate-900 */ /* slate-900 */ /* slate-9009248579238752aaaaaabbbbb */
+        --bg: #0f172a; /* slate-900 */
         --panel: #111827; /* gray-900 */
         --muted: #94a3b8; /* slate-400 */
         --text: #e5e7eb; /* gray-200 */
@@ -84,7 +84,7 @@
         transform: translateY(1px);
       }
       .btn-green {
-        background: #22c55e;
+        background: #2263c5;
         color: #052e16;
       }
       .btn-green:hover {
@@ -534,7 +534,6 @@
       let selectedSquare = null;
       let legalTargets = [];
       let myColor = "spectator";
-      let nameIsSet = false;
       const origin = window.location.origin;
       console.log("[client] origin =", origin);
       // Hide connection chatter in UI; rely on assignment/state messages
@@ -794,6 +793,15 @@
       document.addEventListener("DOMContentLoaded", () => {
         positionToasts();
       });
+      // Simple query param helper
+      function getQueryParam(key) {
+        try {
+          const params = new URLSearchParams(window.location.search || "");
+          return params.get(key);
+        } catch (e) {
+          return null;
+        }
+      }
       function showOverlayMode(mode, data = {}) {
         currentOverlayMode = mode;
         // modes: 'ready', 'name', 'waiting', 'offer', 'gameover', 'spectating'
@@ -811,6 +819,21 @@
           $actions.append(
             '<button id="btn-newgame" class="btn btn-green" data-primary="true">Start Game</button>'
           );
+        } else if (mode === "name") {
+          $title.text("Enter your name");
+          $msg.text("This helps your opponent see who they're playing.");
+          $nameField.show();
+          $tcField.hide();
+          $actions.append(
+            '<button id="btn-save-name" class="btn btn-green" data-primary="true">Continue</button>'
+          );
+          // Prefill from query string if provided
+          const qp = (getQueryParam("name") || "").trim();
+          if (qp) {
+            $("#name-input").val(qp.slice(0, 24));
+          }
+          // Focus input after render
+          setTimeout(() => { $("#name-input").trigger("focus"); }, 0);
         } else if (mode === "waiting") {
           $title.text("Waiting for opponent to accept game");
           $msg.text("");
@@ -861,7 +884,6 @@
       window.addEventListener("message", (event) => {
         const { type, payload } = event.data || {};
         if (type === "SET_PLAYER_NAME") {
-          nameIsSet = true;
           const name = (payload?.name || "").trim();
           if (!name) return;
 
@@ -876,19 +898,23 @@
         }
       });
 
-      setTimeout(() => {
-        if (!nameIsSet) {
-          // Save locally
-          const name = "ChessPlayer";
-          localStorage.setItem("playerName", name);
-
-          // Send to server via socket
-          socket.emit("setName", { name });
-
-          // Switch UI state
-          showOverlayMode("ready");
+      // Local fallback: Save name from prompt
+      $(document).on("click", "#btn-save-name", () => {
+        const name = ($("#name-input").val() || "").trim();
+        if (!name) {
+          $("#name-input").trigger("focus");
+          return;
         }
-      }, 5000);
+        localStorage.setItem("playerName", name);
+        socket.emit("setName", { name });
+        showOverlayMode("ready");
+      });
+      $(document).on("keydown", "#name-input", (e) => {
+        if (e.key === "Enter") {
+          $("#btn-save-name").trigger("click");
+          e.preventDefault();
+        }
+      });
 
       // Cancel start
       $(document).on("click", "#btn-cancel-start", () => {
@@ -975,8 +1001,13 @@
           board && board.orientation(orientation);
           // Name prompt first time
           const saved = localStorage.getItem("playerName");
-          if (saved) {
-            socket.emit("setName", { name: saved });
+          const qp = (getQueryParam("name") || "").trim();
+          const picked = (saved || qp || "").trim();
+          if (picked) {
+            const finalName = picked.slice(0, 24);
+            // Ensure stored for future loads
+            localStorage.setItem("playerName", finalName);
+            socket.emit("setName", { name: finalName });
             showOverlayMode("ready");
           } else {
             showOverlayMode("name");
@@ -996,7 +1027,13 @@
           )
           .show();
         if (myColor === "spectator") {
-          showOverlayMode("spectating");
+          // If the game is already started, immediately hide overlay so spectator sees the live game.
+          if (data && data.started) {
+            paused = false;
+            $("#overlay").hide();
+          } else {
+            showOverlayMode("spectating");
+          }
         }
         console.log("[client] assigned as", myColor);
       });
@@ -1112,6 +1149,9 @@
           // Map to primary action per mode
           if (currentOverlayMode === "ready") {
             $("#btn-newgame").trigger("click");
+            e.preventDefault();
+          } else if (currentOverlayMode === "name") {
+            $("#btn-save-name").trigger("click");
             e.preventDefault();
           } else if (currentOverlayMode === "offer") {
             $("#btn-accept").trigger("click");
