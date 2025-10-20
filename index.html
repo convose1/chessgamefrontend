@@ -38,16 +38,17 @@
         margin: 0;
         font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
           Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
-        background: radial-gradient(
-          1200px 800px at 10% 10%,
-          #111827 0%,
-          #0b1022 60%,
-          #050816 100%
-        );
+        background: #000000;
         color: var(--text);
-        display: grid;
-        grid-template-rows: auto 1fr auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         min-height: 100vh;
+        overflow: hidden; /* Prevent scrolling */
+      }
+      html {
+        background: #000000;
+        overflow: hidden; /* Prevent scrolling */
       }
       header {
         padding: 16px 20px;
@@ -114,26 +115,19 @@
       }
 
       main {
-        display: grid;
-        gap: 16px;
-        padding: 0 20px 20px;
-        align-items: start;
-        grid-template-columns: 1fr;
-        max-width: 1100px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         width: 100%;
-        margin: 0 auto;
-      }
-      @media (min-width: 900px) {
-        main {
-          grid-template-columns: auto;
-        }
+        height: 100vh;
+        padding: 10px;
       }
 
       .card {
         background: linear-gradient(
           180deg,
-          rgba(255, 255, 255, 0.04),
-          rgba(255, 255, 255, 0.02)
+          #1a1f2e,
+          #0f1419
         );
         border: 1px solid rgba(255, 255, 255, 0.08);
         border-radius: 16px;
@@ -148,67 +142,82 @@
       .board-wrap {
         display: grid;
         gap: 10px;
-        /* Content (inner) width equals the board's responsive width */
-        --content-width: clamp(240px, 86vw, 640px);
-        /* Padding around everything */
-        --pad-x: 16px; /* horizontal padding */
-        --pad-y: 16px; /* vertical padding */
-        width: calc(var(--content-width) + (var(--pad-x) * 2));
-        max-width: calc(640px + (var(--pad-x) * 2));
+        /* Responsive sizing based on viewport aspect ratio */
+        /* Account for: padding (24px), player-info bar (~50px), gaps (20px) = ~94px total */
+        --board-size: min(calc(100vw - 64px), calc(100vh - 134px));
+        width: calc(var(--board-size) + 24px);
         margin: 0 auto;
-        padding: var(--pad-y) var(--pad-x);
+        padding: 12px;
+      }
+      
+      /* Portrait mode: fill width */
+      @media (max-aspect-ratio: 1/1) {
+        .board-wrap {
+          --board-size: calc(100vw - 64px);
+        }
+      }
+      
+      /* Landscape mode: fill height - make board + controls fill viewport */
+      @media (min-aspect-ratio: 1/1) {
+        .board-wrap {
+          --board-size: calc(100vh - 134px);
+        }
       }
       /* Ensure inner rows fill the card width so border encloses all children visually */
       .board-wrap .row,
-      .board-wrap .timers,
-      .board-wrap #status,
-      .board-wrap #role {
+      .board-wrap .player-info {
         width: 100%;
+      }
+      /* Hide the role text to save space */
+      .board-wrap #role {
+        display: none !important;
       }
       #board {
-        width: 100%;
-        max-width: 640px;
-      }
-      @media (min-width: 900px) {
-        #board {
-          width: 640px;
-        }
+        width: var(--board-size);
+        height: var(--board-size);
       }
 
-      /* Timers */
-      .timers {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
+      /* Player info bar */
+      .player-info {
+        display: flex;
+        align-items: center;
         gap: 10px;
+        margin-top: 10px;
+        font-variant-numeric: tabular-nums;
       }
-      .clock {
-        background: linear-gradient(
-          180deg,
-          rgba(255, 255, 255, 0.04),
-          rgba(255, 255, 255, 0.02)
-        );
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
-        padding: 10px 12px;
+      .player-section {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        font-weight: 800;
-        letter-spacing: 0.5px;
-        font-variant-numeric: tabular-nums;
+        gap: 8px;
+        flex: 1;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        padding: 10px 14px;
+        font-size: 14px;
       }
-      .clock .side {
-        opacity: 0.7;
-        font-weight: 700;
-      }
-      .clock.active {
+      .player-section.active {
         border-color: var(--accent-2);
-        box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.25) inset;
+        box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.25);
       }
-      .clock.low {
-        border-color: var(--danger);
-        box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.25) inset;
-        color: #fecaca;
+      .player-name {
+        font-weight: 700;
+        color: var(--text);
+      }
+      .player-color {
+        color: var(--muted);
+        font-size: 13px;
+        margin-left: 2px;
+      }
+      .player-timer {
+        font-weight: 800;
+        color: var(--text);
+        margin-left: auto;
+      }
+      .player-info .btn {
+        padding: 10px 20px;
+        font-size: 14px;
       }
 
       /* Right panel */
@@ -238,15 +247,7 @@
         border-radius: 10px;
       }
 
-      /* Status + moves */
-      #status {
-        font-size: 14px;
-        color: #dbeafe;
-        padding: 8px 10px;
-        border-radius: 10px;
-        background: rgba(59, 130, 246, 0.08);
-        border: 1px solid rgba(59, 130, 246, 0.2);
-      }
+      /* Status removed - no longer needed */
       .moves {
         max-height: 320px;
         overflow: auto;
@@ -405,26 +406,23 @@
     <main>
       <section class="card board-wrap" style="position: relative">
         <div id="board"></div>
-        <div class="timers">
-          <div id="white-clock" class="clock active">
-            <span class="side" id="white-name">White</span
-            ><span id="white-timer">2:00</span>
+        <div class="player-info">
+          <div class="player-section">
+            <span id="black-name" class="player-name">111</span>
+            <span class="player-color">(Black)</span>
+            <span id="black-timer" class="player-timer">2:00</span>
           </div>
-          <div id="black-clock" class="clock">
-            <span class="side" id="black-name">Black</span
-            ><span id="black-timer">2:00</span>
+          <div class="player-section">
+            <span id="white-name" class="player-name">ChessPlayer</span>
+            <span class="player-color">(White)</span>
+            <span id="white-timer" class="player-timer">2:00</span>
           </div>
+          <button id="btn-forfeit" class="btn btn-danger">Forfeit</button>
         </div>
-        <div id="status">White to move</div>
         <div
           id="role"
           style="font-size: 12px; color: #94a3b8; display: none"
         ></div>
-
-        <!-- Forfeit button -->
-        <div class="row" style="justify-content: flex-end; margin-top: 6px">
-          <button id="btn-forfeit" class="btn btn-danger">Forfeit</button>
-        </div>
 
         <!-- Overlay for pre-start and end-of-game -->
         <div
@@ -536,6 +534,19 @@
       let myColor = "spectator";
       const origin = window.location.origin;
       console.log("[client] origin =", origin);
+      
+      // Generate or retrieve persistent player ID
+      function getPlayerId() {
+        let playerId = localStorage.getItem('chess_player_id');
+        if (!playerId) {
+          playerId = 'player_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+          localStorage.setItem('chess_player_id', playerId);
+        }
+        return playerId;
+      }
+      const playerId = getPlayerId();
+      console.log("[client] Player ID:", playerId);
+      
       // Hide connection chatter in UI; rely on assignment/state messages
       const PROD_SOCKET_URL =
         "https://chessgame-h9fvhvhzc7bae3ft.canadacentral-01.azurewebsites.net/";
@@ -551,6 +562,7 @@
             reconnection: true,
             reconnectionAttempts: 10,
             reconnectionDelay: 500,
+            auth: { playerId: playerId }
           })
         : io(PROD_SOCKET_URL, {
             transports: ["websocket", "polling"],
@@ -559,6 +571,7 @@
             reconnection: true,
             reconnectionAttempts: 10,
             reconnectionDelay: 500,
+            auth: { playerId: playerId }
           });
 
       socket.on("connect_error", (err) => {
@@ -571,6 +584,8 @@
       console.log("[client] script loaded");
       socket.on("connect", () => {
         console.log("[client] socket connected", socket.id);
+        // Send player ID to server for reconnection tracking
+        socket.emit("identify", { playerId: playerId });
       });
       socket.on("disconnect", (r) => {
         console.warn("[client] socket disconnected", r);

@@ -7,11 +7,19 @@ import chess
 
 app = Flask(__name__, static_folder='.')
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev')
-socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')
+socketio = SocketIO(
+    app, 
+    cors_allowed_origins='*', 
+    async_mode='threading',
+    ping_timeout=5,  # Faster disconnect detection (default is 60)
+    ping_interval=2   # Check connection every 2 seconds (default is 25)
+)
 
 # Single game state (one room). Extendable to rooms if needed.
 board = chess.Board()
 players = {'w': None, 'b': None}  # sid of socket
+player_ids = {'w': None, 'b': None}  # persistent player_id for each color
+sid_to_player_id = {}  # sid -> player_id mapping
 names = {}  # sid -> display name
 connected_sids = set()  # all currently connected client sids
 white_time = 120
@@ -22,6 +30,8 @@ _timer_lock = threading.Lock()
 _timer_running = False
 pending_start = None  # {'from': sid, 'base': mins, 'inc': inc, 'opponent': sid or None}
 _pending_lock = threading.Lock()
+
+# No reconnection grace period - immediate game over on disconnect
 
 
 def get_turn():
@@ -113,12 +123,13 @@ def stop_timer():
 
 
 def reset_game(base_mins=2, inc=0):
-    global board, white_time, black_time, inc_per_move
+    global board, white_time, black_time, inc_per_move, player_ids
     stop_timer()
     board = chess.Board()
     white_time = int(base_mins) * 60
     black_time = int(base_mins) * 60
     inc_per_move = int(inc)
+    # Keep player_ids so players maintain their colors across games
     broadcast_state({'reset': True})
 
 
@@ -131,20 +142,12 @@ def root():
 def on_connect():
     sid = request.sid
     connected_sids.add(sid)
-    # Assign color
-    color = 'spectator'
-    if players['w'] is None:
-        players['w'] = sid
-        color = 'w'
-    elif players['b'] is None:
-        players['b'] = sid
-        color = 'b'
-    elif players['w'] == sid:
-        color = 'w'
-    elif players['b'] == sid:
-        color = 'b'
-    # If a game is running, mark started so spectators hide overlay
+    print(f"[server] connect: sid={sid}")
+    
+    # Initial assignment will happen after 'identify' event
+    # For now, assign as spectator
     emit_assign_to_sid(sid, started=_timer_running)
+    
     # If a game offer is currently pending, make sure late joiners see it
     if pending_start and pending_start.get('from') != sid:
         try:
@@ -159,7 +162,53 @@ def on_connect():
             )
         except Exception:
             pass
-    print(f"[server] {sid} joined as {color}")
+
+
+@socketio.on('identify')
+def on_identify(data):
+    """Handle player identification."""
+    sid = request.sid
+    player_id = data.get('playerId')
+    
+    if not player_id:
+        return
+    
+    sid_to_player_id[sid] = player_id
+    print(f"[server] identify: sid={sid}, player_id={player_id}")
+    
+    # Check if this player_id already has a color assigned (only if game not running)
+    restored_color = None
+    if not _timer_running:
+        for color in ['w', 'b']:
+            if player_ids[color] == player_id:
+                # Same player rejoining - restore their color only if game not active
+                players[color] = sid
+                restored_color = color
+                print(f"[server] {sid} (player_id={player_id}) restored as {color}")
+                break
+    
+    # Assign color if needed
+    color = 'spectator'
+    if restored_color:
+        color = restored_color
+    elif players['w'] is None:
+        players['w'] = sid
+        player_ids['w'] = player_id
+        color = 'w'
+    elif players['b'] is None:
+        players['b'] = sid
+        player_ids['b'] = player_id
+        color = 'b'
+    elif players['w'] == sid:
+        color = 'w'
+    elif players['b'] == sid:
+        color = 'b'
+    
+    # Send updated assignment
+    emit_assign_to_sid(sid, started=_timer_running)
+    
+    if not restored_color:
+        print(f"[server] {sid} assigned as {color}")
     broadcast_state({'note': f'{sid} joined as {color}'})
 
 
@@ -172,15 +221,47 @@ def request_sid():
 def on_disconnect():
     sid = request.sid
     connected_sids.discard(sid)
+    
+    # Determine if this was a player
+    disconnected_color = None
+    if players['w'] == sid:
+        disconnected_color = 'w'
+    elif players['b'] == sid:
+        disconnected_color = 'b'
+    
+    # If a player disconnected during an active game, immediately end it
+    if disconnected_color and _timer_running:
+        player_name = names.get(sid, 'White' if disconnected_color == 'w' else 'Black')
+        print(f"[server] Player {disconnected_color} ({sid}) disconnected during game. Ending game immediately.")
+        
+        # Stop the timer
+        stop_timer()
+        
+        # Declare the other player as winner
+        winner_color = 'b' if disconnected_color == 'w' else 'w'
+        winner_sid = players[winner_color]
+        winner_name = names.get(winner_sid, 'White' if winner_color == 'w' else 'Black')
+        
+        socketio.emit('overlay', {
+            'message': f'{winner_name} wins - opponent disconnected',
+            'winnerName': winner_name,
+            'winnerColor': winner_color,
+            'reason': 'Opponent disconnected'
+        })
+    
+    # Clear the player slot
     if players['w'] == sid:
         players['w'] = None
+        player_ids['w'] = None
     if players['b'] == sid:
         players['b'] = None
+        player_ids['b'] = None
     names.pop(sid, None)
+    
     global pending_start
     if pending_start and pending_start.get('from') == sid:
         pending_start = None
-    socketio.emit('overlay', {'message': 'Opponent disconnected'})
+    
     broadcast_state()
 
 
