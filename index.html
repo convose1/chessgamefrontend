@@ -40,9 +40,7 @@
           Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
         background: #000000;
         color: var(--text);
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        display: block;
         min-height: 100vh;
         overflow: hidden; /* Prevent scrolling */
       }
@@ -116,11 +114,11 @@
 
       main {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: center;
         width: 100%;
-        height: 100vh;
-        padding: 10px;
+        height: 100dvh;
+        padding: 0;
       }
 
       .card {
@@ -141,26 +139,31 @@
        while the outer card grows by the padding. */
       .board-wrap {
         display: grid;
-        gap: 10px;
-        /* Responsive sizing based on viewport aspect ratio */
-        /* Account for: padding (24px), player-info bar (~50px), gaps (20px) = ~94px total */
-        --board-size: min(calc(100vw - 64px), calc(100vh - 134px));
+        gap: 12px;
+        justify-items: center; /* center the board horizontally */
+        /* Responsive sizing with fixed inner padding */
+        --board-size: min(calc(100vw - 64px), calc(100dvh - 88px));
+        /* width matches board + left/right padding for even side spacing */
         width: calc(var(--board-size) + 24px);
+        height: 100dvh;
         margin: 0 auto;
         padding: 12px;
       }
       
       /* Portrait mode: fill width */
       @media (max-aspect-ratio: 1/1) {
+        main { align-items: center; }
         .board-wrap {
-          --board-size: calc(100vw - 64px);
+          --board-size: calc(100vw - 24px);
+          width: 100vw; /* purple area touches sides */
+          height: auto; /* allow black padding above/below */
         }
       }
       
-      /* Landscape mode: fill height - make board + controls fill viewport */
+      /* Landscape mode: fill height */
       @media (min-aspect-ratio: 1/1) {
         .board-wrap {
-          --board-size: calc(100vh - 134px);
+          --board-size: calc(100dvh - 88px);
         }
       }
       /* Ensure inner rows fill the card width so border encloses all children visually */
@@ -182,7 +185,7 @@
         display: flex;
         align-items: center;
         gap: 10px;
-        margin-top: 10px;
+        margin-top: 0;
         font-variant-numeric: tabular-nums;
       }
       .player-section {
@@ -582,10 +585,42 @@
         console.error("[client] socket error", err);
       });
       console.log("[client] script loaded");
+      // Compute board size from available space inside the card so padding is even
+      function setBoardSize() {
+        const wrap = document.querySelector('.board-wrap');
+        const info = document.querySelector('.player-info');
+        const boardEl = document.getElementById('board');
+        if (!wrap || !boardEl || !info) return;
+        const isPortrait = window.innerHeight > window.innerWidth;
+        const pad = 12; // base CSS padding
+        const gap = 12; // base CSS gap
+        // In portrait, purple area (card) spans full width, but retains internal padding.
+        const sideMargin = isPortrait ? 0 : 64;
+        const padH = pad;
+        // Ensure consistent horizontal padding
+        wrap.style.paddingLeft = padH + 'px';
+        wrap.style.paddingRight = padH + 'px';
+        const maxByWidth = Math.max(240, Math.floor(window.innerWidth - sideMargin - padH * 2));
+        const maxByHeight = Math.max(
+          240,
+          Math.floor(window.innerHeight - pad * 2 - info.offsetHeight - gap)
+        );
+        const rawSize = Math.max(240, Math.min(maxByWidth, maxByHeight));
+        // Snap to a multiple of 8 so tiles fit perfectly and center visually
+        const size = Math.floor(rawSize / 8) * 8;
+        wrap.style.setProperty('--board-size', size + 'px');
+        // Card width: portrait uses CSS width:100vw; landscape matches board + padding
+        if (!isPortrait) {
+          wrap.style.width = `${size + padH * 2}px`;
+        } else {
+          wrap.style.width = '';
+        }
+      }
       socket.on("connect", () => {
         console.log("[client] socket connected", socket.id);
         // Send player ID to server for reconnection tracking
         socket.emit("identify", { playerId: playerId });
+        // sizing is handled by CSS
       });
       socket.on("disconnect", (r) => {
         console.warn("[client] socket disconnected", r);
@@ -806,6 +841,7 @@
       window.addEventListener("resize", () => {
         if ($("#overlay").is(":visible")) positionOverlayCard();
         positionToasts();
+        setBoardSize();
       });
       window.addEventListener(
         "scroll",
@@ -818,6 +854,9 @@
       // Initial alignment on load
       document.addEventListener("DOMContentLoaded", () => {
         positionToasts();
+        setBoardSize();
+        // run again after layout settles
+        setTimeout(setBoardSize, 100);
       });
       // Simple query param helper
       function getQueryParam(key) {
